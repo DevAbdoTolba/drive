@@ -1,2 +1,506 @@
-# drive
-family NAS based on your local PC
+# Local Family Cloud — MVP 1
+
+This repository runs a local family cloud on one Windows 11 computer:
+
+- Nextcloud stores documents and general files.
+- Immich stores photos and videos and receives automatic phone backups.
+- Docker Compose manages both applications and their private databases/caches.
+
+The system is for a trusted home LAN only. It deliberately has no HTTPS,
+internet exposure, port forwarding, VPN, custom application, document RAG, or
+advanced AI search.
+
+## Architecture
+
+| Application | Containers | Host port | Persistent storage |
+| --- | --- | --- | --- |
+| Nextcloud | Apache, cron, MariaDB, Redis | `8080` | `storage/nextcloud/data`, `family-cloud-nextcloud-html`, `family-cloud-nextcloud-db` |
+| Immich | Server, PostgreSQL, Valkey | `2283` | `storage/immich/library`, `family-cloud-immich-db` |
+
+MariaDB, PostgreSQL, Redis, and Valkey have no host ports. The Nextcloud and
+Immich networks are separate. Redis and Valkey are disposable caches; they do
+not need backups.
+
+Immich machine learning is intentionally not included in MVP1. After the first
+Immich login, disable its Smart Search and Facial Recognition jobs as described
+below so the server does not queue work for a machine-learning container.
+
+## Storage layout
+
+```text
+drive/
+├── storage/
+│   ├── nextcloud/data/       # Nextcloud user documents
+│   └── immich/library/       # Immich originals, thumbnails and DB dumps
+├── backups/
+│   ├── nextcloud/database/   # Temporary Nextcloud SQL dump location
+│   └── immich/database/      # Temporary Immich SQL dump location
+├── .env                      # Local secrets; ignored by Git
+├── .env.example
+└── docker-compose.yml
+```
+
+The databases and Nextcloud application/configuration files use named Docker
+volumes inside Docker Desktop's Linux VM. This avoids running databases directly
+on a Windows bind mount. Nextcloud files and Immich media remain separate and
+visible under `storage`.
+
+Never edit application files inside these storage folders while containers are
+running. Never commit `storage`, `backups`, or `.env`.
+
+## Requirements
+
+- Windows 11
+- Docker Desktop using the WSL2 backend and Linux containers
+- At least 8 GB RAM available to Docker; more helps large video imports
+- Enough free disk space for the media library, generated thumbnails, database,
+  and a separate backup copy
+- A Private (not Public) Windows network profile
+
+Start Docker Desktop and wait until its engine reports that it is running.
+
+## First installation
+
+Run all commands from PowerShell in this repository.
+
+### 1. Create the private environment file
+
+```powershell
+Copy-Item .env.example .env
+notepad .env
+```
+
+Find the computer's LAN IPv4 address:
+
+```powershell
+Get-NetIPConfiguration |
+  Where-Object IPv4DefaultGateway |
+  Select-Object -ExpandProperty IPv4Address |
+  Select-Object IPAddress
+```
+
+In `.env`:
+
+1. Replace `CHANGE_ME_LAN_IP` with that address, such as `192.168.1.50`.
+2. Replace every password beginning with `CHANGE_ME`.
+3. Use a different long password for each entry.
+4. Keep `IMMICH_DB_PASSWORD` strictly alphanumeric (`A-Z`, `a-z`, `0-9`).
+5. Adjust `TZ` if `Africa/Cairo` is not correct.
+
+This PowerShell expression generates a 64-character alphanumeric secret. Run it
+once for each password:
+
+```powershell
+(-join (1..64 | ForEach-Object {
+  'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'[
+    [Security.Cryptography.RandomNumberGenerator]::GetInt32(62)
+  ]
+}))
+```
+
+`NEXTCLOUD_ADMIN_USER` and `NEXTCLOUD_ADMIN_PASSWORD` create the first
+Nextcloud admin only on the first installation. Changing them later does not
+change that account's password.
+
+### 2. Prepare and validate
+
+```powershell
+New-Item -ItemType Directory -Force `
+  .\storage\nextcloud\data, `
+  .\storage\immich\library, `
+  .\backups\nextcloud\database, `
+  .\backups\immich\database
+
+docker compose config
+docker compose pull
+```
+
+`docker compose config` must finish without an error. Do not continue if it
+shows a missing variable or an invalid address.
+
+### 3. Start
+
+```powershell
+docker compose up -d
+docker compose ps
+```
+
+The databases may take a minute on first start. Repeat `docker compose ps`
+until `nextcloud`, `immich-server`, and both databases are healthy/running.
+
+If a container does not start:
+
+```powershell
+$ServiceName = 'nextcloud'
+docker compose logs --tail 100 $ServiceName
+```
+
+Service names are listed by:
+
+```powershell
+docker compose config --services
+```
+
+### 4. Finish Nextcloud setup
+
+Open `http://localhost:8080` on the host computer and sign in with the
+`NEXTCLOUD_ADMIN_USER` and `NEXTCLOUD_ADMIN_PASSWORD` values from `.env`.
+
+Enable the cron background-job mode:
+
+```powershell
+docker compose exec --user www-data nextcloud php occ background:cron
+docker compose exec --user www-data nextcloud php occ status
+```
+
+In Nextcloud:
+
+1. Open **Administration settings > Users**.
+2. Create a group named `family`.
+3. Create a separate non-admin account for each person and add it to `family`.
+4. In **Files**, create a folder named `Family`.
+5. Share that folder with the `family` group and choose the needed permissions.
+
+Each user's other files remain private unless that user shares them.
+
+### 5. Finish Immich setup
+
+Open `http://localhost:2283`. The first account created is the Immich admin.
+Use a strong password that is different from all database passwords.
+
+Then:
+
+1. Open **Administration > Users** and create one account per family member.
+2. Open **Administration > Settings > Machine Learning Settings** and disable
+   Smart Search and Facial Recognition for MVP1.
+3. Create a test album under **Albums** and share it with another family user.
+4. Set `IMMICH_ALLOW_SETUP=false` in `.env` and apply it:
+
+```powershell
+docker compose up -d
+```
+
+Use user-to-user album sharing for MVP1, not public share links.
+
+## Home-network access
+
+Keep the server computer awake and connected to the same home network as the
+client device. From another device, use the IP placed in `.env`:
+
+- Nextcloud: `http://<LAN_IP>:8080`
+- Immich: `http://<LAN_IP>:2283`
+
+If Windows Firewall blocks access, open an Administrator PowerShell and add
+Private-profile-only rules:
+
+```powershell
+New-NetFirewallRule `
+  -DisplayName 'Family Cloud - Nextcloud' `
+  -Direction Inbound -Action Allow -Protocol TCP `
+  -LocalPort 8080 -Profile Private
+
+New-NetFirewallRule `
+  -DisplayName 'Family Cloud - Immich' `
+  -Direction Inbound -Action Allow -Protocol TCP `
+  -LocalPort 2283 -Profile Private
+```
+
+Do not create Public-profile rules. Do not forward either port on the router.
+If the computer's LAN IP changes, update `NEXTCLOUD_TRUSTED_DOMAINS` in `.env`,
+run `docker compose up -d`, and reconnect clients with the new URL. A DHCP
+reservation on the home router can keep the address stable without exposing it
+to the internet.
+
+## Acceptance tests
+
+### Nextcloud document test
+
+1. On another LAN device, open `http://<LAN_IP>:8080`.
+2. Sign in as a non-admin family member.
+3. Upload a small document to the user's private Files area.
+4. Download it and confirm it opens correctly.
+5. Upload a second file to the shared `Family` folder.
+6. Sign in as another member and confirm that shared file is present.
+
+### Immich phone backup test
+
+1. Install the official Immich app on an Android or iPhone.
+2. Set its server address to `http://<LAN_IP>:2283` and sign in as a non-admin.
+3. Tap the cloud icon, select one small camera/test album, and enable backup.
+4. Take one new photo and one short video.
+5. Open/resume the Immich app and wait for both uploads to complete.
+6. Open Immich in a browser and confirm both assets appear for that user.
+7. Add the photo to the shared test album and confirm the invited user sees it.
+
+For the first test, keep the phone app open. Background scheduling varies by
+phone battery and data settings.
+
+### Persistence test
+
+```powershell
+docker compose restart
+docker compose ps
+```
+
+After services recover, download the same Nextcloud document and view the same
+Immich photo. `docker compose restart` does not delete data.
+
+## Daily operation
+
+Start or apply configuration changes:
+
+```powershell
+docker compose up -d
+```
+
+Show status:
+
+```powershell
+docker compose ps
+```
+
+Stop containers without deleting data:
+
+```powershell
+docker compose stop
+```
+
+Start stopped containers:
+
+```powershell
+docker compose start
+```
+
+Stop and remove containers/networks while preserving volumes and files:
+
+```powershell
+docker compose down
+```
+
+Never add `-v` to `docker compose down`; it deletes named-volume state.
+
+## Backup
+
+A backup must contain all four items:
+
+1. Nextcloud SQL dump
+2. Nextcloud `data` plus its `html` named volume
+3. Immich SQL dump plus the entire Immich library
+4. `.env` (stored securely because it contains secrets)
+
+The following creates one consistent local backup set. It does not copy that set
+to another disk; copy the completed folder to separate storage afterward.
+
+```powershell
+$BackupStamp = Get-Date -Format 'yyyy-MM-dd_HHmmss'
+$BackupRoot = Join-Path (Resolve-Path .\backups) $BackupStamp
+New-Item -ItemType Directory -Force `
+  "$BackupRoot\nextcloud", `
+  "$BackupRoot\immich"
+
+docker compose exec --user www-data nextcloud php occ maintenance:mode --on
+docker compose exec -T nextcloud-db sh -c `
+  'mariadb-dump --single-transaction --default-character-set=utf8mb4 -u"$MARIADB_USER" -p"$MARIADB_PASSWORD" "$MARIADB_DATABASE" > /backup/nextcloud.sql'
+docker compose exec -T immich-db sh -c `
+  'pg_dump --clean --if-exists --dbname="$POSTGRES_DB" --username="$POSTGRES_USER" | gzip > /backup/immich-database.sql.gz'
+
+docker compose stop nextcloud-cron nextcloud immich-server
+
+tar.exe -czf "$BackupRoot\nextcloud\nextcloud-data.tar.gz" `
+  -C .\storage\nextcloud\data .
+tar.exe -czf "$BackupRoot\immich\immich-library.tar.gz" `
+  -C .\storage\immich\library .
+
+docker run --rm `
+  --mount 'type=volume,source=family-cloud-nextcloud-html,target=/source,readonly' `
+  --mount "type=bind,source=$BackupRoot\nextcloud,target=/backup" `
+  --entrypoint tar nextcloud:33.0.6-apache `
+  -czf /backup/nextcloud-html.tar.gz -C /source .
+
+Copy-Item .\backups\nextcloud\database\nextcloud.sql `
+  "$BackupRoot\nextcloud\nextcloud.sql"
+Copy-Item .\backups\immich\database\immich-database.sql.gz `
+  "$BackupRoot\immich\immich-database.sql.gz"
+Copy-Item .\.env "$BackupRoot\.env"
+Copy-Item .\docker-compose.yml "$BackupRoot\docker-compose.yml"
+
+docker compose start nextcloud immich-server
+docker compose exec --user www-data nextcloud php occ maintenance:mode --off
+docker compose start nextcloud-cron
+docker compose ps
+```
+
+Check that these files exist and are not empty:
+
+```powershell
+Get-ChildItem -Recurse $BackupRoot | Select-Object FullName, Length
+```
+
+Copy `$BackupRoot` to a different physical disk. A backup left only on the same
+computer does not protect against disk failure, theft, or ransomware.
+
+Immich also creates daily database dumps under
+`storage/immich/library/backups`, but those dumps do not contain photos/videos.
+
+## Restore
+
+Restoring replaces current application state. Preserve the current `storage`,
+`.env`, and named volumes before continuing. The commands below are intended for
+a fresh replacement machine or a deliberate disaster recovery.
+
+Use the `.env` and `docker-compose.yml` from the same backup set. Run all
+commands from the restored repository directory.
+
+### Restore Nextcloud
+
+Set the backup folder first:
+
+```powershell
+$RestoreRoot = 'D:\path\to\backup\yyyy-MM-dd_HHmmss'
+```
+
+Stop the stack, then remove only the two Nextcloud volumes being restored:
+
+```powershell
+docker compose down
+docker volume rm family-cloud-nextcloud-html family-cloud-nextcloud-db
+docker volume create family-cloud-nextcloud-html
+```
+
+Restore the file storage and application/configuration volume:
+
+```powershell
+if (Test-Path .\storage\nextcloud\data.before-restore) {
+  throw '.\storage\nextcloud\data.before-restore already exists'
+}
+Move-Item .\storage\nextcloud\data .\storage\nextcloud\data.before-restore
+New-Item -ItemType Directory -Force .\storage\nextcloud\data
+tar.exe -xzf "$RestoreRoot\nextcloud\nextcloud-data.tar.gz" `
+  -C .\storage\nextcloud\data
+
+docker run --rm `
+  --mount 'type=volume,source=family-cloud-nextcloud-html,target=/target' `
+  --mount "type=bind,source=$RestoreRoot\nextcloud,target=/backup,readonly" `
+  --entrypoint tar nextcloud:33.0.6-apache `
+  -xzf /backup/nextcloud-html.tar.gz -C /target
+```
+
+Start a fresh database, copy in the dump, and restore it:
+
+```powershell
+Copy-Item "$RestoreRoot\nextcloud\nextcloud.sql" `
+  .\backups\nextcloud\database\restore.sql
+docker compose up -d nextcloud-db nextcloud-redis
+docker compose exec -T nextcloud-db sh -c `
+  'until mariadb-admin ping -u"$MARIADB_USER" -p"$MARIADB_PASSWORD" --silent; do sleep 2; done; mariadb -u"$MARIADB_USER" -p"$MARIADB_PASSWORD" "$MARIADB_DATABASE" < /backup/restore.sql'
+docker compose up -d nextcloud nextcloud-cron
+docker compose exec --user www-data nextcloud php occ maintenance:mode --off
+docker compose exec --user www-data nextcloud php occ status
+```
+
+Test a known document before deleting `data.before-restore`.
+
+### Restore Immich
+
+Immich v3 can restore a SQL dump during fresh-instance onboarding. Stop the
+stack and remove only the Immich database volume:
+
+```powershell
+docker compose down
+docker volume rm family-cloud-immich-db
+```
+
+Restore the media folder without immediately deleting the old copy:
+
+```powershell
+if (Test-Path .\storage\immich\library.before-restore) {
+  throw '.\storage\immich\library.before-restore already exists'
+}
+Move-Item .\storage\immich\library .\storage\immich\library.before-restore
+New-Item -ItemType Directory -Force .\storage\immich\library
+tar.exe -xzf "$RestoreRoot\immich\immich-library.tar.gz" `
+  -C .\storage\immich\library
+```
+
+Set `IMMICH_ALLOW_SETUP=true` in `.env`, then start Immich:
+
+```powershell
+docker compose up -d immich-db immich-valkey immich-server
+```
+
+Open `http://localhost:2283`, choose **Restore from backup**, and upload
+`$RestoreRoot\immich\immich-database.sql.gz`. After the restore succeeds, set
+`IMMICH_ALLOW_SETUP=false` again and run:
+
+```powershell
+docker compose up -d
+docker compose ps
+```
+
+Verify several old photos and videos before deleting `library.before-restore`.
+
+## Troubleshooting
+
+### Docker pipe or engine error
+
+If a command mentions `dockerDesktopLinuxEngine` or a missing named pipe, start
+Docker Desktop, confirm it is using Linux containers, and wait for the engine.
+
+### Nextcloud says the domain is untrusted
+
+Add the exact LAN IP or hostname to the space-separated
+`NEXTCLOUD_TRUSTED_DOMAINS` value in `.env`, then run:
+
+```powershell
+docker compose up -d
+```
+
+### Phone cannot connect
+
+- Confirm the phone and server are on the same non-guest LAN.
+- Confirm Windows calls that LAN a Private network.
+- Test both URLs from the server computer first.
+- Check `docker compose ps` and the Private firewall rules.
+- Guest Wi-Fi/client isolation can block devices from reaching each other.
+
+### A container is unhealthy
+
+```powershell
+docker compose ps
+$ServiceName = 'nextcloud'
+docker compose logs --tail 200 $ServiceName
+```
+
+Do not delete volumes as a troubleshooting step.
+
+### Storage is filling up
+
+```powershell
+Get-PSDrive -PSProvider FileSystem
+docker system df
+```
+
+Do not manually delete Immich-generated folders or Nextcloud data files. Free
+space elsewhere or expand storage, then use the applications' own controls.
+
+### Update safety
+
+Make and verify a backup first. Read both applications' release notes. This MVP
+pins Nextcloud and Immich versions; do not change image versions casually.
+
+## Security limits
+
+- Traffic uses plain HTTP and can be read by another device on the same LAN.
+- Use unique strong passwords and trusted home devices only.
+- Keep the Windows network profile Private and both firewall rules Private-only.
+- Do not use router port forwarding, UPnP exposure, DMZ hosting, or public DNS.
+- Keep Windows, Docker Desktop, Nextcloud, Immich, and phone apps patched through
+  planned, backed-up upgrades.
+- Losing both the storage and its database loses important metadata; back up both.
+
+Official references:
+
+- [Nextcloud Docker image documentation](https://github.com/nextcloud/docker)
+- [Immich Docker Compose installation](https://docs.immich.app/install/docker-compose/)
+- [Immich mobile backup](https://docs.immich.app/features/mobile-backup/)
+- [Immich backup and restore](https://docs.immich.app/administration/backup-and-restore/)
