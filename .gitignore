@@ -70,6 +70,14 @@ web_modules/
 .env.*
 !.env.example
 
+# Family cloud data and backups
+storage/**
+!storage/**/
+!storage/**/.gitkeep
+backups/**
+!backups/**/
+!backups/**/.gitkeep
+
 # parcel-bundler cache (https://parceljs.org/)
 .cache
 .parcel-cache

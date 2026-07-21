@@ -1,0 +1,151 @@
+name: family-cloud
+
+services:
+  nextcloud-db:
+    image: mariadb:11.4.12
+    restart: unless-stopped
+    command: --transaction-isolation=READ-COMMITTED
+    environment:
+      MARIADB_DATABASE: ${NEXTCLOUD_DB_NAME:?Set NEXTCLOUD_DB_NAME in .env}
+      MARIADB_USER: ${NEXTCLOUD_DB_USER:?Set NEXTCLOUD_DB_USER in .env}
+      MARIADB_PASSWORD: ${NEXTCLOUD_DB_PASSWORD:?Set NEXTCLOUD_DB_PASSWORD in .env}
+      MARIADB_ROOT_PASSWORD: ${NEXTCLOUD_DB_ROOT_PASSWORD:?Set NEXTCLOUD_DB_ROOT_PASSWORD in .env}
+      TZ: ${TZ:-Etc/UTC}
+    volumes:
+      - nextcloud-db:/var/lib/mysql
+      - ./backups/nextcloud/database:/backup
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - nextcloud-internal
+
+  nextcloud-redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    command: redis-server --save "" --appendonly no
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nextcloud-internal
+
+  nextcloud:
+    image: nextcloud:33.0.6-apache
+    restart: unless-stopped
+    depends_on:
+      nextcloud-db:
+        condition: service_healthy
+      nextcloud-redis:
+        condition: service_healthy
+    environment: &nextcloud-environment
+      MYSQL_DATABASE: ${NEXTCLOUD_DB_NAME:?Set NEXTCLOUD_DB_NAME in .env}
+      MYSQL_USER: ${NEXTCLOUD_DB_USER:?Set NEXTCLOUD_DB_USER in .env}
+      MYSQL_PASSWORD: ${NEXTCLOUD_DB_PASSWORD:?Set NEXTCLOUD_DB_PASSWORD in .env}
+      MYSQL_HOST: nextcloud-db
+      REDIS_HOST: nextcloud-redis
+      NEXTCLOUD_ADMIN_USER: ${NEXTCLOUD_ADMIN_USER:?Set NEXTCLOUD_ADMIN_USER in .env}
+      NEXTCLOUD_ADMIN_PASSWORD: ${NEXTCLOUD_ADMIN_PASSWORD:?Set NEXTCLOUD_ADMIN_PASSWORD in .env}
+      NEXTCLOUD_TRUSTED_DOMAINS: ${NEXTCLOUD_TRUSTED_DOMAINS:?Set NEXTCLOUD_TRUSTED_DOMAINS in .env}
+      NEXTCLOUD_INIT_HTACCESS: "true"
+      PHP_MEMORY_LIMIT: 512M
+      PHP_UPLOAD_LIMIT: ${NEXTCLOUD_UPLOAD_LIMIT:-10G}
+      TZ: ${TZ:-Etc/UTC}
+    ports:
+      - "${LAN_BIND_ADDRESS:-0.0.0.0}:${NEXTCLOUD_PORT:-8080}:80"
+    volumes: &nextcloud-volumes
+      - nextcloud-html:/var/www/html
+      - ${NEXTCLOUD_DATA_PATH:-./storage/nextcloud/data}:/var/www/html/data
+    healthcheck:
+      test: ["CMD-SHELL", "php -r 'exit(@file_get_contents(\"http://127.0.0.1/status.php\") === false ? 1 : 0);'"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 2m
+    networks:
+      - nextcloud-internal
+
+  nextcloud-cron:
+    image: nextcloud:33.0.6-apache
+    restart: unless-stopped
+    entrypoint: /cron.sh
+    depends_on:
+      nextcloud:
+        condition: service_healthy
+    environment:
+      TZ: ${TZ:-Etc/UTC}
+    volumes: *nextcloud-volumes
+    networks:
+      - nextcloud-internal
+
+  immich-db:
+    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${IMMICH_DB_NAME:?Set IMMICH_DB_NAME in .env}
+      POSTGRES_USER: ${IMMICH_DB_USER:?Set IMMICH_DB_USER in .env}
+      POSTGRES_PASSWORD: ${IMMICH_DB_PASSWORD:?Set IMMICH_DB_PASSWORD in .env}
+      POSTGRES_INITDB_ARGS: --data-checksums
+    volumes:
+      - immich-db:/var/lib/postgresql/data
+      - ./backups/immich/database:/backup
+    shm_size: 128mb
+    healthcheck:
+      disable: false
+    networks:
+      - immich-internal
+
+  immich-valkey:
+    image: docker.io/valkey/valkey:9@sha256:4963247afc4cd33c7d3b2d2816b9f7f8eeebab148d29056c2ca4d7cbc966f2d9
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - immich-internal
+
+  immich-server:
+    image: ghcr.io/immich-app/immich-server:${IMMICH_VERSION:-v3.0.3}
+    restart: unless-stopped
+    depends_on:
+      immich-db:
+        condition: service_healthy
+      immich-valkey:
+        condition: service_healthy
+    environment:
+      DB_HOSTNAME: immich-db
+      DB_DATABASE_NAME: ${IMMICH_DB_NAME:?Set IMMICH_DB_NAME in .env}
+      DB_USERNAME: ${IMMICH_DB_USER:?Set IMMICH_DB_USER in .env}
+      DB_PASSWORD: ${IMMICH_DB_PASSWORD:?Set IMMICH_DB_PASSWORD in .env}
+      REDIS_HOSTNAME: immich-valkey
+      IMMICH_ALLOW_SETUP: ${IMMICH_ALLOW_SETUP:-true}
+      TZ: ${TZ:-Etc/UTC}
+    ports:
+      - "${LAN_BIND_ADDRESS:-0.0.0.0}:${IMMICH_PORT:-2283}:2283"
+    volumes:
+      - ${IMMICH_MEDIA_PATH:-./storage/immich/library}:/data
+    healthcheck:
+      disable: false
+    networks:
+      - immich-internal
+
+volumes:
+  nextcloud-db:
+    name: family-cloud-nextcloud-db
+  nextcloud-html:
+    name: family-cloud-nextcloud-html
+  immich-db:
+    name: family-cloud-immich-db
+
+networks:
+  nextcloud-internal:
+    internal: true
+  immich-internal:
+    internal: true
