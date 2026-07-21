@@ -60,7 +60,7 @@ services:
       - "${LAN_BIND_ADDRESS:-0.0.0.0}:${NEXTCLOUD_PORT:-8080}:80"
     volumes: &nextcloud-volumes
       - nextcloud-html:/var/www/html
-      - ${NEXTCLOUD_DATA_PATH:-./storage/nextcloud/data}:/var/www/html/data
+      - nextcloud-data:/var/www/html/data
     healthcheck:
       test: ["CMD-SHELL", "php -r 'exit(@file_get_contents(\"http://127.0.0.1/status.php\") === false ? 1 : 0);'"]
       interval: 30s
@@ -68,6 +68,7 @@ services:
       retries: 10
       start_period: 2m
     networks:
+      - nextcloud-edge
       - nextcloud-internal
 
   nextcloud-cron:
@@ -134,6 +135,7 @@ services:
     healthcheck:
       disable: false
     networks:
+      - immich-edge
       - immich-internal
 
 volumes:
@@ -141,10 +143,14 @@ volumes:
     name: family-cloud-nextcloud-db
   nextcloud-html:
     name: family-cloud-nextcloud-html
+  nextcloud-data:
+    name: family-cloud-nextcloud-data
   immich-db:
     name: family-cloud-immich-db
 
 networks:
+  nextcloud-edge:
+  immich-edge:
   nextcloud-internal:
     internal: true
   immich-internal:

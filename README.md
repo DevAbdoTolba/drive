@@ -14,7 +14,7 @@ advanced AI search.
 
 | Application | Containers | Host port | Persistent storage |
 | --- | --- | --- | --- |
-| Nextcloud | Apache, cron, MariaDB, Redis | `8080` | `storage/nextcloud/data`, `family-cloud-nextcloud-html`, `family-cloud-nextcloud-db` |
+| Nextcloud | Apache, cron, MariaDB, Redis | `8080` | `family-cloud-nextcloud-html`, `family-cloud-nextcloud-data`, `family-cloud-nextcloud-db` |
 | Immich | Server, PostgreSQL, Valkey | `2283` | `storage/immich/library`, `family-cloud-immich-db` |
 
 MariaDB, PostgreSQL, Redis, and Valkey have no host ports. The Nextcloud and
@@ -30,7 +30,6 @@ below so the server does not queue work for a machine-learning container.
 ```text
 drive/
 ├── storage/
-│   ├── nextcloud/data/       # Nextcloud user documents
 │   └── immich/library/       # Immich originals, thumbnails and DB dumps
 ├── backups/
 │   ├── nextcloud/database/   # Temporary Nextcloud SQL dump location
@@ -40,10 +39,9 @@ drive/
 └── docker-compose.yml
 ```
 
-The databases and Nextcloud application/configuration files use named Docker
-volumes inside Docker Desktop's Linux VM. This avoids running databases directly
-on a Windows bind mount. Nextcloud files and Immich media remain separate and
-visible under `storage`.
+The databases and all Nextcloud files use named Docker volumes inside Docker
+Desktop's Linux VM. This avoids the permission problems caused by an NTFS bind
+mount. Immich media remains separate and visible under `storage`.
 
 Never edit application files inside these storage folders while containers are
 running. Never commit `storage`, `backups`, or `.env`.
@@ -81,21 +79,22 @@ Get-NetIPConfiguration |
 
 In `.env`:
 
-1. Replace `CHANGE_ME_LAN_IP` with that address, such as `192.168.1.50`.
-2. Replace every password beginning with `CHANGE_ME`.
-3. Use a different long password for each entry.
-4. Keep `IMMICH_DB_PASSWORD` strictly alphanumeric (`A-Z`, `a-z`, `0-9`).
-5. Adjust `TZ` if `Africa/Cairo` is not correct.
+1. Set `LAN_BIND_ADDRESS` to that address.
+2. Replace `CHANGE_ME_LAN_IP` with the same address.
+3. Replace every password beginning with `CHANGE_ME`.
+4. Use a different long password for each entry.
+5. Keep `IMMICH_DB_PASSWORD` strictly alphanumeric (`A-Z`, `a-z`, `0-9`).
+6. Adjust `TZ` if `Africa/Cairo` is not correct.
 
-This PowerShell expression generates a 64-character alphanumeric secret. Run it
+This PowerShell expression generates a 48-character alphanumeric secret. Run it
 once for each password:
 
 ```powershell
-(-join (1..64 | ForEach-Object {
-  'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'[
-    [Security.Cryptography.RandomNumberGenerator]::GetInt32(62)
-  ]
-}))
+$SecretBytes = New-Object byte[] 24
+$SecretGenerator = [Security.Cryptography.RandomNumberGenerator]::Create()
+$SecretGenerator.GetBytes($SecretBytes)
+$SecretGenerator.Dispose()
+[BitConverter]::ToString($SecretBytes).Replace('-', '')
 ```
 
 `NEXTCLOUD_ADMIN_USER` and `NEXTCLOUD_ADMIN_PASSWORD` create the first
@@ -106,7 +105,6 @@ change that account's password.
 
 ```powershell
 New-Item -ItemType Directory -Force `
-  .\storage\nextcloud\data, `
   .\storage\immich\library, `
   .\backups\nextcloud\database, `
   .\backups\immich\database
@@ -143,7 +141,7 @@ docker compose config --services
 
 ### 4. Finish Nextcloud setup
 
-Open `http://localhost:8080` on the host computer and sign in with the
+Open `http://<LAN_IP>:8080` on the host computer and sign in with the
 `NEXTCLOUD_ADMIN_USER` and `NEXTCLOUD_ADMIN_PASSWORD` values from `.env`.
 
 Enable the cron background-job mode:
@@ -190,8 +188,15 @@ client device. From another device, use the IP placed in `.env`:
 - Nextcloud: `http://<LAN_IP>:8080`
 - Immich: `http://<LAN_IP>:2283`
 
-If Windows Firewall blocks access, open an Administrator PowerShell and add
-Private-profile-only rules:
+The Wi-Fi network must be set to **Private**, not Public. In an Administrator
+PowerShell, check and, when needed, change the profile:
+
+```powershell
+Get-NetConnectionProfile | Select-Object InterfaceAlias, NetworkCategory
+Set-NetConnectionProfile -InterfaceAlias 'Wi-Fi' -NetworkCategory Private
+```
+
+Then add Private-profile-only firewall rules:
 
 ```powershell
 New-NetFirewallRule `
@@ -284,7 +289,7 @@ Never add `-v` to `docker compose down`; it deletes named-volume state.
 A backup must contain all four items:
 
 1. Nextcloud SQL dump
-2. Nextcloud `data` plus its `html` named volume
+2. Nextcloud `data` and `html` named volumes
 3. Immich SQL dump plus the entire Immich library
 4. `.env` (stored securely because it contains secrets)
 
@@ -306,8 +311,6 @@ docker compose exec -T immich-db sh -c `
 
 docker compose stop nextcloud-cron nextcloud immich-server
 
-tar.exe -czf "$BackupRoot\nextcloud\nextcloud-data.tar.gz" `
-  -C .\storage\nextcloud\data .
 tar.exe -czf "$BackupRoot\immich\immich-library.tar.gz" `
   -C .\storage\immich\library .
 
@@ -316,6 +319,12 @@ docker run --rm `
   --mount "type=bind,source=$BackupRoot\nextcloud,target=/backup" `
   --entrypoint tar nextcloud:33.0.6-apache `
   -czf /backup/nextcloud-html.tar.gz -C /source .
+
+docker run --rm `
+  --mount 'type=volume,source=family-cloud-nextcloud-data,target=/source,readonly' `
+  --mount "type=bind,source=$BackupRoot\nextcloud,target=/backup" `
+  --entrypoint tar nextcloud:33.0.6-apache `
+  -czf /backup/nextcloud-data.tar.gz -C /source .
 
 Copy-Item .\backups\nextcloud\database\nextcloud.sql `
   "$BackupRoot\nextcloud\nextcloud.sql"
@@ -359,30 +368,32 @@ Set the backup folder first:
 $RestoreRoot = 'D:\path\to\backup\yyyy-MM-dd_HHmmss'
 ```
 
-Stop the stack, then remove only the two Nextcloud volumes being restored:
+Stop the stack, then remove only the three Nextcloud volumes being restored:
 
 ```powershell
 docker compose down
-docker volume rm family-cloud-nextcloud-html family-cloud-nextcloud-db
+docker volume rm `
+  family-cloud-nextcloud-html `
+  family-cloud-nextcloud-data `
+  family-cloud-nextcloud-db
 docker volume create family-cloud-nextcloud-html
+docker volume create family-cloud-nextcloud-data
 ```
 
 Restore the file storage and application/configuration volume:
 
 ```powershell
-if (Test-Path .\storage\nextcloud\data.before-restore) {
-  throw '.\storage\nextcloud\data.before-restore already exists'
-}
-Move-Item .\storage\nextcloud\data .\storage\nextcloud\data.before-restore
-New-Item -ItemType Directory -Force .\storage\nextcloud\data
-tar.exe -xzf "$RestoreRoot\nextcloud\nextcloud-data.tar.gz" `
-  -C .\storage\nextcloud\data
-
 docker run --rm `
   --mount 'type=volume,source=family-cloud-nextcloud-html,target=/target' `
   --mount "type=bind,source=$RestoreRoot\nextcloud,target=/backup,readonly" `
   --entrypoint tar nextcloud:33.0.6-apache `
   -xzf /backup/nextcloud-html.tar.gz -C /target
+
+docker run --rm `
+  --mount 'type=volume,source=family-cloud-nextcloud-data,target=/target' `
+  --mount "type=bind,source=$RestoreRoot\nextcloud,target=/backup,readonly" `
+  --entrypoint tar nextcloud:33.0.6-apache `
+  -xzf /backup/nextcloud-data.tar.gz -C /target
 ```
 
 Start a fresh database, copy in the dump, and restore it:
@@ -398,7 +409,7 @@ docker compose exec --user www-data nextcloud php occ maintenance:mode --off
 docker compose exec --user www-data nextcloud php occ status
 ```
 
-Test a known document before deleting `data.before-restore`.
+Test a known document before removing any pre-restore copies.
 
 ### Restore Immich
 
