@@ -82,7 +82,7 @@ services:
       PHP_UPLOAD_LIMIT: ${NEXTCLOUD_UPLOAD_LIMIT:-10G}
       TZ: ${TZ:-Etc/UTC}
     ports:
-      - "${LAN_BIND_ADDRESS:-0.0.0.0}:${NEXTCLOUD_PORT:-52480}:80"
+      - "${LAN_BIND_ADDRESS:-0.0.0.0}:${NEXTCLOUD_PORT:-45321}:80"
     volumes: &nextcloud-volumes
       - nextcloud-html:/var/www/html
       - nextcloud-data:/var/www/html/data
@@ -154,7 +154,7 @@ services:
       IMMICH_ALLOW_SETUP: ${IMMICH_ALLOW_SETUP:-true}
       TZ: ${TZ:-Etc/UTC}
     ports:
-      - "${LAN_BIND_ADDRESS:-0.0.0.0}:${IMMICH_PORT:-52283}:2283"
+      - "${LAN_BIND_ADDRESS:-0.0.0.0}:${IMMICH_PORT:-12345}:2283"
     volumes:
       - ${IMMICH_MEDIA_PATH:-./storage/immich/library}:/data
     healthcheck:

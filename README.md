@@ -15,8 +15,8 @@ advanced AI search.
 
 | Application | Containers | Host port | Persistent storage |
 | --- | --- | --- | --- |
-| Nextcloud | Apache, cron, MariaDB, Redis | `52480` | `family-cloud-nextcloud-html`, `family-cloud-nextcloud-data`, `family-cloud-nextcloud-db` |
-| Immich | Server, PostgreSQL, Valkey | `52283` | `storage/immich/library`, `family-cloud-immich-db` |
+| Nextcloud | Apache, cron, MariaDB, Redis | `45321` | `family-cloud-nextcloud-html`, `family-cloud-nextcloud-data`, `family-cloud-nextcloud-db` |
+| Immich | Server, PostgreSQL, Valkey | `12345` | `storage/immich/library`, `family-cloud-immich-db` |
 | Local proxy | Caddy | `80` | None; configuration is tracked in `Caddyfile` |
 
 MariaDB, PostgreSQL, Redis, and Valkey have no host ports. The Nextcloud and
@@ -146,7 +146,7 @@ docker compose config --services
 
 ### 4. Finish Nextcloud setup
 
-Open `http://<LAN_IP>:52480` on the host computer and sign in with the
+Open `http://<LAN_IP>:45321` on the host computer and sign in with the
 `NEXTCLOUD_ADMIN_USER` and `NEXTCLOUD_ADMIN_PASSWORD` values from `.env`.
 
 Enable the cron background-job mode:
@@ -168,7 +168,7 @@ Each user's other files remain private unless that user shares them.
 
 ### 5. Finish Immich setup
 
-Open `http://<LAN_IP>:52283`. The first account created is the Immich admin.
+Open `http://<LAN_IP>:12345`. The first account created is the Immich admin.
 Use a strong password that is different from all database passwords.
 
 Then:
@@ -190,8 +190,8 @@ Use user-to-user album sharing for MVP1, not public share links.
 Keep the server computer awake and connected to the same home network as the
 client device. From another device, use the IP placed in `.env`:
 
-- Nextcloud: `http://<LAN_IP>:52480`
-- Immich: `http://<LAN_IP>:52283`
+- Nextcloud: `http://<LAN_IP>:45321`
+- Immich: `http://<LAN_IP>:12345`
 
 Caddy also accepts these easier addresses on default HTTP port 80:
 
@@ -241,12 +241,12 @@ Get-NetFirewallRule -DisplayName 'Family Cloud - *' | Remove-NetFirewallRule
 New-NetFirewallRule `
   -DisplayName 'Family Cloud - Nextcloud' `
   -Direction Inbound -Action Allow -Protocol TCP `
-  -LocalPort 52480 -RemoteAddress 192.168.1.0/24 -Profile Private
+  -LocalPort 45321 -RemoteAddress 192.168.1.0/24 -Profile Private
 
 New-NetFirewallRule `
   -DisplayName 'Family Cloud - Immich' `
   -Direction Inbound -Action Allow -Protocol TCP `
-  -LocalPort 52283 -RemoteAddress 192.168.1.0/24 -Profile Private
+  -LocalPort 12345 -RemoteAddress 192.168.1.0/24 -Profile Private
 
 New-NetFirewallRule `
   -DisplayName 'Family Cloud - Local Proxy' `
@@ -282,7 +282,7 @@ device.
 
 ### Nextcloud document test
 
-1. On another LAN device, open `http://<LAN_IP>:52480`.
+1. On another LAN device, open `http://<LAN_IP>:45321`.
 2. Sign in as a non-admin family member.
 3. Upload a small document to the user's private Files area.
 4. Download it and confirm it opens correctly.
@@ -292,7 +292,7 @@ device.
 ### Immich phone backup test
 
 1. Install the official Immich app on an Android or iPhone.
-2. Set its server address to `http://<LAN_IP>:52283` and sign in as a non-admin.
+2. Set its server address to `http://<LAN_IP>:12345` and sign in as a non-admin.
 3. Tap the cloud icon, select one small camera/test album, and enable backup.
 4. Take one new photo and one short video.
 5. Open/resume the Immich app and wait for both uploads to complete.
@@ -501,7 +501,7 @@ Set `IMMICH_ALLOW_SETUP=true` in `.env`, then start Immich:
 docker compose up -d immich-db immich-valkey immich-server
 ```
 
-Open `http://<LAN_IP>:52283`, choose **Restore from backup**, and upload
+Open `http://<LAN_IP>:12345`, choose **Restore from backup**, and upload
 `$RestoreRoot\immich\immich-database.sql.gz`. After the restore succeeds, set
 `IMMICH_ALLOW_SETUP=false` again and run:
 
