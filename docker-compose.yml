@@ -4,6 +4,9 @@ services:
   reverse-proxy:
     image: caddy:2.10.2-alpine
     restart: unless-stopped
+    environment:
+      PHOTOS_FALLBACK_HOSTNAME: ${PHOTOS_FALLBACK_HOSTNAME:?Set PHOTOS_FALLBACK_HOSTNAME in .env}
+      DRIVE_FALLBACK_HOSTNAME: ${DRIVE_FALLBACK_HOSTNAME:?Set DRIVE_FALLBACK_HOSTNAME in .env}
     depends_on:
       nextcloud:
         condition: service_healthy

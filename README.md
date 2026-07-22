@@ -83,10 +83,12 @@ In `.env`:
 
 1. Leave `LAN_BIND_ADDRESS=0.0.0.0`; Docker Desktop uses it to publish to the LAN.
 2. Replace `CHANGE_ME_LAN_IP` with the detected address.
-3. Replace every password beginning with `CHANGE_ME`.
-4. Use a different long password for each entry.
-5. Keep `IMMICH_DB_PASSWORD` strictly alphanumeric (`A-Z`, `a-z`, `0-9`).
-6. Adjust `TZ` if `Africa/Cairo` is not correct.
+3. Replace `CHANGE_ME_LAN_IP_DASHED` with the same address using dashes, such
+   as `192-168-1-6`.
+4. Replace every password beginning with `CHANGE_ME`.
+5. Use a different long password for each entry.
+6. Keep `IMMICH_DB_PASSWORD` strictly alphanumeric (`A-Z`, `a-z`, `0-9`).
+7. Adjust `TZ` if `Africa/Cairo` is not correct.
 
 This PowerShell expression generates a 48-character alphanumeric secret. Run it
 once for each password:
@@ -208,6 +210,19 @@ The router must distribute that DNS server to clients using DHCP. Editing the
 Windows hosts file only makes the names work on that Windows computer. If the
 two Wi-Fi networks are isolated from each other, the router must allow local
 traffic between them; DNS and Caddy cannot bypass network isolation.
+
+If router DNS cannot be configured, use the router-free fallback names from
+`.env` instead. For the example LAN IP `192.168.1.6`, they are:
+
+- Nextcloud: `http://drive.192-168-1-6.sslip.io`
+- Immich: `http://photos.192-168-1-6.sslip.io`
+
+The external DNS service sees the small hostname lookup, but it returns the
+private LAN IP, so application traffic stays on the LAN. Some routers block
+public DNS answers containing private IPs as rebinding protection; in that
+case, these fallback names will not resolve. If the server LAN IP changes,
+update both fallback hostname values and `NEXTCLOUD_TRUSTED_DOMAINS` in `.env`,
+then run `docker compose up -d`.
 
 The Wi-Fi network must be set to **Private**, not Public. In an Administrator
 PowerShell, check and, when needed, change the profile:

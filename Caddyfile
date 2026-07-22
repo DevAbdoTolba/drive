@@ -3,11 +3,11 @@
 	admin off
 }
 
-http://photos.tolba {
+http://photos.tolba, http://{$PHOTOS_FALLBACK_HOSTNAME} {
 	reverse_proxy immich-server:2283
 }
 
-http://drive.tolba {
+http://drive.tolba, http://{$DRIVE_FALLBACK_HOSTNAME} {
 	reverse_proxy nextcloud:80
 }
 
