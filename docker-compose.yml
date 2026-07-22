@@ -1,6 +1,28 @@
 name: family-cloud
 
 services:
+  reverse-proxy:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    depends_on:
+      nextcloud:
+        condition: service_healthy
+      immich-server:
+        condition: service_healthy
+    ports:
+      - "${LAN_BIND_ADDRESS:-0.0.0.0}:80:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - nextcloud-edge
+      - immich-edge
+
   nextcloud-db:
     image: mariadb:11.4.12
     restart: unless-stopped

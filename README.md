@@ -4,6 +4,7 @@ This repository runs a local family cloud on one Windows 11 computer:
 
 - Nextcloud stores documents and general files.
 - Immich stores photos and videos and receives automatic phone backups.
+- Caddy provides the local `drive.tolba` and `photos.tolba` HTTP addresses.
 - Docker Compose manages both applications and their private databases/caches.
 
 The system is for a trusted home LAN only. It deliberately has no HTTPS,
@@ -16,6 +17,7 @@ advanced AI search.
 | --- | --- | --- | --- |
 | Nextcloud | Apache, cron, MariaDB, Redis | `52480` | `family-cloud-nextcloud-html`, `family-cloud-nextcloud-data`, `family-cloud-nextcloud-db` |
 | Immich | Server, PostgreSQL, Valkey | `52283` | `storage/immich/library`, `family-cloud-immich-db` |
+| Local proxy | Caddy | `80` | None; configuration is tracked in `Caddyfile` |
 
 MariaDB, PostgreSQL, Redis, and Valkey have no host ports. The Nextcloud and
 Immich networks are separate. Redis and Valkey are disposable caches; they do
@@ -124,7 +126,8 @@ docker compose ps
 ```
 
 The databases may take a minute on first start. Repeat `docker compose ps`
-until `nextcloud`, `immich-server`, and both databases are healthy/running.
+until `reverse-proxy`, `nextcloud`, `immich-server`, and both databases are
+healthy/running.
 
 If a container does not start:
 
@@ -188,6 +191,24 @@ client device. From another device, use the IP placed in `.env`:
 - Nextcloud: `http://<LAN_IP>:52480`
 - Immich: `http://<LAN_IP>:52283`
 
+Caddy also accepts these easier addresses on default HTTP port 80:
+
+- Nextcloud: `http://drive.tolba`
+- Immich: `http://photos.tolba`
+
+These names are private local names, not public internet domains. They must be
+created as local DNS host records on the home router or another DNS server:
+
+```text
+drive.tolba   -> <LAN_IP>
+photos.tolba  -> <LAN_IP>
+```
+
+The router must distribute that DNS server to clients using DHCP. Editing the
+Windows hosts file only makes the names work on that Windows computer. If the
+two Wi-Fi networks are isolated from each other, the router must allow local
+traffic between them; DNS and Caddy cannot bypass network isolation.
+
 The Wi-Fi network must be set to **Private**, not Public. In an Administrator
 PowerShell, check and, when needed, change the profile:
 
@@ -211,13 +232,36 @@ New-NetFirewallRule `
   -DisplayName 'Family Cloud - Immich' `
   -Direction Inbound -Action Allow -Protocol TCP `
   -LocalPort 52283 -RemoteAddress 192.168.1.0/24 -Profile Private
+
+New-NetFirewallRule `
+  -DisplayName 'Family Cloud - Local Proxy' `
+  -Direction Inbound -Action Allow -Protocol TCP `
+  -LocalPort 80 -RemoteAddress 192.168.1.0/24 -Profile Private
 ```
 
-Do not create Public-profile rules. Do not forward either port on the router.
+Do not create Public-profile rules. Do not forward any Family Cloud port on the
+router.
 If the computer's LAN IP changes, update `NEXTCLOUD_TRUSTED_DOMAINS` in `.env`,
 run `docker compose up -d`, and reconnect clients with the new URL. A DHCP
 reservation on the home router can keep the address stable without exposing it
 to the internet.
+
+Control the friendly local addresses without stopping either application:
+
+```powershell
+# Disable drive.tolba and photos.tolba.
+docker compose stop reverse-proxy
+
+# Enable them again.
+docker compose start reverse-proxy
+
+# Reload the proxy container.
+docker compose restart reverse-proxy
+```
+
+The high-port IP addresses remain available as recovery access. Remove their
+firewall rules only after the local DNS names work reliably on every intended
+device.
 
 ## Acceptance tests
 
@@ -467,6 +511,13 @@ Add the exact LAN IP or hostname to the space-separated
 
 ```powershell
 docker compose up -d
+$TrustedDomainIndex = @(
+  docker compose exec -T --user www-data nextcloud `
+    php occ config:system:get trusted_domains
+).Count
+docker compose exec --user www-data nextcloud `
+  php occ config:system:set trusted_domains $TrustedDomainIndex `
+  --value=drive.tolba
 ```
 
 ### Phone cannot connect

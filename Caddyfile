@@ -1,0 +1,18 @@
+{
+	auto_https off
+	admin off
+}
+
+http://photos.tolba {
+	reverse_proxy immich-server:2283
+}
+
+http://drive.tolba {
+	reverse_proxy nextcloud:80
+}
+
+:80 {
+	@health path /health
+	respond @health "ok" 200
+	respond "Unknown Family Cloud hostname" 404
+}
